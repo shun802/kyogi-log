@@ -139,6 +139,7 @@ nav button.on::before{content:"";position:absolute;top:0;left:28%;right:28%;heig
 .sheet button{width:100%;margin-top:8px}
 .sheet .row button{margin-top:0}
 .sheet>b{font-size:17px}
+.pk{display:flex;gap:8px;margin-top:6px}.pk select,.pk input{flex:1 1 0;min-width:0;width:50%;margin:0}
 </style>
 </head>
 <body>
@@ -427,6 +428,10 @@ function vStats(){
   +'<div class="card"><div class="ttl">出場ポイントの男女比（ミックスのみ）</div><div class="grid">'+st(r.r43,'男4・女3')+st(r.r34,'男3・女4')+'</div></div>'
   +'<button data-a="copy" style="width:100%">全データをコピー（JSON）</button><div class="small" id="cpmsg" style="text-align:center;margin-top:6px"></div>';
 }
+function pick(sid,iid,st,list){
+  var mo='<option value="">不明</option>'+list.map(function(m){return '<option value="'+m.id+'"'+(m.id===st.mid?' selected':'')+'>'+esc(memLabel(m))+(m.me?'（自分）':'')+'</option>'}).join('');
+  var mv=(!st.mid&&st.w==='o'&&st.n)?st.n:'';
+  return '<div class="pk"><select id="'+sid+'">'+mo+'</select><input id="'+iid+'" placeholder="手入力（名前・番号）" value="'+esc(mv)+'" autocomplete="off"></div>'}
 function vOverlay(){
   var g=cur();
   if(S.sheet==='score'&&g){var h=S.sh,rs=sortMem((S.roster&&S.roster[g.team])||[]);
@@ -434,13 +439,13 @@ function vOverlay(){
     var wb=function(a,v,l,c){return '<button data-a="'+a+'" data-v="'+v+'" class="'+(c===v?'on':'')+'">'+l+'</button>'};
     return '<div class="ov"><div class="sheet" style="max-height:92vh;overflow:auto"><b>'+esc(g.team)+' 得点の記録</b>'
     +(rs.length?'':'<div class="small" style="margin-top:6px">「メンバー」タブで登録すると、ここから選べます。</div>')
-    +'<label>ゴールした人</label><select id="sh-sel">'+opt(h.mid)+'</select>'
+    +'<label>ゴールした人</label>'+pick('sh-sel','sh-in',{mid:h.mid,w:h.w,n:h.n},rs)
     +'<div class="row" style="margin-top:10px"><button data-a="cal" class="'+(h.cal?'on':'')+'">キャラハン（アシストなし）</button></div>'
-    +(h.cal?'':'<label>アシストした人</label><select id="sh-asel">'+opt(h.amid)+'</select>')
+    +(h.cal?'':'<label>アシストした人</label>'+pick('sh-asel','sh-ain',{mid:h.amid,w:h.a,n:h.an},rs))
     +'<button class="p" data-a="scok" style="margin-top:14px">記録する</button><button data-a="sheetclose">キャンセル</button></div></div>';}
   if(S.sheet==='blk'&&g){var bb=S.bl,rs2=sortMem((S.roster&&S.roster[g.team])||[]);
     return '<div class="ov"><div class="sheet" style="max-height:92vh;overflow:auto"><b>ブロックした人</b>'
-    +'<select id="bl-sel" style="margin-top:10px"><option value="">不明</option>'+rs2.map(function(m){return '<option value="'+m.id+'"'+(m.id===bb.mid?' selected':'')+'>'+esc(memLabel(m))+(m.me?'（自分）':'')+'</option>'}).join('')+'</select>'
+    +'<div style="margin-top:10px">'+pick('bl-sel','bl-in',{mid:bb.mid,w:bb.w,n:bb.n},rs2)+'</div>'
     +'<button class="p" data-a="blok" style="margin-top:14px">記録する</button><button data-a="sheetclose">キャンセル</button></div></div>';}
   if(S.dlg&&S.dlg.t==='editmem'){var em=((S.roster&&S.roster[S.dlg.team])||[]).find(function(x){return x.id===S.dlg.id});if(em)
     return '<div class="ov"><div class="sheet"><b>メンバーを編集</b><label>背番号</label><input id="e-no" type="number" inputmode="numeric" value="'+esc(em.no)+'"><label>名前</label><input id="e-name" value="'+esc(em.name)+'">'
@@ -464,7 +469,7 @@ function render(){
   try{body=S.tab==='game'?vGame():S.tab==='hist'?vHist():S.tab==='mem'?vMem():vStats()}catch(x){showErr(x);return}
   var IC={game:'<circle cx="12" cy="13.5" r="7.5"/><path d="M12 9.5v4l2.6 1.6M9.5 2.5h5"/>',hist:'<path d="M4 6.5h16M4 12h16M4 17.5h9"/>',stats:'<path d="M5 20v-9M12 20V4M19 20v-6"/>',mem:'<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><circle cx="17.5" cy="9" r="2.5"/><path d="M17.2 14.2c2.6.3 4.3 2 4.3 5.3"/>'};
   var nv=function(k,l){return '<button data-a="tab" data-v="'+k+'" class="'+(S.tab===k?'on':'')+'"><svg viewBox="0 0 24 24" aria-hidden="true">'+IC[k]+'</svg>'+l+'</button>'};
-  document.getElementById('app').innerHTML='<main>'+body+'<div class="small" style="text-align:center;margin:8px 0">v20<span id="sync">'+syncMsg+'</span></div></main><nav>'+nv('game','試合')+nv('hist','履歴')+nv('stats','成績')+nv('mem','メンバー')+'</nav>'+vOverlay();try{syncGroups();heroUpd()}catch(x){}
+  document.getElementById('app').innerHTML='<main>'+body+'<div class="small" style="text-align:center;margin:8px 0">v21<span id="sync">'+syncMsg+'</span></div></main><nav>'+nv('game','試合')+nv('hist','履歴')+nv('stats','成績')+nv('mem','メンバー')+'</nav>'+vOverlay();try{syncGroups();heroUpd()}catch(x){}
 }
 function capSh(){var a=document.getElementById('sh-n');if(a)S.sh.n=a.value;var b=document.getElementById('sh-an');if(b)S.sh.an=b.value}
 function tick(){
@@ -602,6 +607,15 @@ document.addEventListener('change',function(e){
   else if(id==='sh-asel'){S.sh.a=w;S.sh.an=n;S.sh.amid=mid}
   else{S.bl.w=w;S.bl.n=n;S.bl.mid=mid}
   render();
+});
+document.addEventListener('input',function(e){
+  var id=e.target.id;if(id!=='sh-in'&&id!=='sh-ain'&&id!=='bl-in')return;
+  var v=e.target.value.trim(),w=v?'o':'';
+  var sel=document.getElementById(id==='sh-in'?'sh-sel':id==='sh-ain'?'sh-asel':'bl-sel');
+  if(v&&sel)sel.value='';
+  if(id==='sh-in'){S.sh.w=w;S.sh.n=v;S.sh.mid=''}
+  else if(id==='sh-ain'){S.sh.a=w;S.sh.an=v;S.sh.amid=''}
+  else{S.bl.w=w;S.bl.n=v;S.bl.mid=''}
 });
 init();
 </script>
