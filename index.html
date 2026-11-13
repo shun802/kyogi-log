@@ -139,6 +139,12 @@ header { display: flex; align-items: flex-end; justify-content: space-between; g
 .pgoal .ptxt small { display: block; color: var(--muted); font-size: 12px; }
 .mini { border: 1px solid var(--accent); color: var(--accent); background: none; border-radius: 10px; min-height: 40px; padding: 0 14px; font-weight: 700; white-space: nowrap; }
 .goal-btn { width: 100%; margin-top: 12px; min-height: 48px; border: 0; border-radius: 12px; background: var(--ink); color: var(--bg); font-weight: 700; }
+.adv-card { margin-top: 0; margin-bottom: 12px; }
+.adv-actions { display: flex; gap: 8px; margin-top: 12px; }
+.adv-actions .goal-btn { margin-top: 0; flex: 1; }
+.linkbtn { display: flex; align-items: center; justify-content: center; min-height: 48px; padding: 0 14px; border: 1px solid var(--line); border-radius: 12px; color: var(--ink); text-decoration: none; font-weight: 700; white-space: nowrap; }
+.advrow { font-size: 14px; margin: 4px 0; overflow-wrap: anywhere; }
+.advrow em { font-style: normal; font-weight: 700; margin-right: 6px; }
 .hint-box { margin-top: 14px; padding: 10px 12px; border-left: 4px solid var(--accent); background: var(--bg); border-radius: 6px; font-size: 14px; overflow-wrap: anywhere; }
 .fb-head { margin-top: 24px; padding-top: 14px; border-top: 2px solid var(--line); font-weight: 700; font-size: 15px; }
 .pill.wait { color: var(--accent); }
@@ -182,6 +188,16 @@ header { display: flex; align-items: flex-end; justify-content: space-between; g
   <section class="card goal-card" aria-label="今日の目標">
     <h2>今日の目標<span id="goalSub"></span></h2>
     <div id="goalBody"></div>
+  </section>
+
+  <section class="card adv-card" aria-label="振り返りまとめ">
+    <h2>振り返りまとめ<span>直近の記録から</span></h2>
+    <div id="advBody"></div>
+    <div class="adv-actions">
+      <button type="button" class="goal-btn" id="advCopy">Claudeに相談する文章をコピー</button>
+      <a class="linkbtn" id="advOpen" href="https://claude.ai/new" target="_blank" rel="noopener">Claudeを開く</a>
+    </div>
+    <p class="hint" style="margin:8px 0 0">コピーした文章をClaudeに貼ると、記録をもとにしたアドバイスがもらえます。</p>
   </section>
 
   <section class="tiles" aria-label="今月のまとめ">
@@ -449,8 +465,57 @@ header { display: flex; align-items: flex-end; justify-content: space-between; g
     body += '<button type="button" class="goal-btn" id="goalBtn">目標を決める</button>';
     $('#goalBody').innerHTML = body;
   }
+  var ACHV = { ok: '達成', part: '一部', ng: '未達' };
+  function recent(n) {
+    return state.entries.slice().sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : (b.ts || 0) - (a.ts || 0); }).slice(0, n);
+  }
+  function hasFb(e) { return e.achv || e.issue || e.good || e.next; }
+  function cut(t, n) { t = String(t || '').replace(/\s+/g, ' '); return t.length > n ? t.slice(0, n) + '…' : t; }
+  function renderAdvice() {
+    var fb = recent(60).filter(hasFb).slice(0, 8), body = '';
+    if (!fb.length) {
+      body = '<p class="gtxt">目標と振り返りを入れると、ここに直近のまとめが出ます。</p>';
+    } else {
+      var c = { ok: 0, part: 0, ng: 0 };
+      fb.forEach(function (e) { if (e.achv) c[e.achv]++; });
+      var tot = c.ok + c.part + c.ng;
+      if (tot) body += '<div class="advrow"><em>目標の達成</em>直近' + tot + '件：達成 ' + c.ok + ' ／ 一部 ' + c.part + ' ／ 未達 ' + c.ng + '</div>';
+      var iss = fb.filter(function (e) { return e.issue; }).slice(0, 3);
+      if (iss.length) body += '<div class="advrow"><em>最近の反省</em>' + iss.map(function (e) { return esc(cut(e.issue, 40)); }).join(' ／ ') + '</div>';
+      var nx = fb.filter(function (e) { return e.next; })[0];
+      if (nx) body += '<div class="advrow"><em>次にやること</em>' + esc(cut(nx.next, 60)) + '</div>';
+    }
+    $('#advBody').innerHTML = body;
+    $('#advCopy').disabled = !fb.length;
+    $('#advCopy').style.opacity = fb.length ? '1' : '.5';
+  }
+  function buildPrompt() {
+    var rows = recent(60).filter(function (e) { return hasFb(e) || e.goal; }).slice(0, 8).map(function (e) {
+      var kind = e.kind === 'match' ? '試合' : (e.kind === 'solo' ? '個人練' : 'チーム練');
+      var parts = [e.date + ' ' + (e.team ? e.team + ' ' : '') + kind];
+      if (e.kind === 'match') {
+        if (e.result) parts.push('結果:' + ({ W: '勝ち', L: '負け', D: '引き分け' }[e.result] || ''));
+        if (e.sf != null && e.sa != null) parts.push('スコア:' + e.sf + '-' + e.sa);
+        if (e.role && ROLE[e.role]) parts.push('役割:' + ROLE[e.role]);
+        var st = []; if (e.g != null) st.push('得点' + e.g); if (e.a != null) st.push('アシスト' + e.a); if (e.d != null) st.push('ブロック' + e.d); if (e.t != null) st.push('ターン' + e.t);
+        if (st.length) parts.push(st.join(' '));
+      } else {
+        if (e.start && e.end) parts.push(e.start + '〜' + e.end); else if (e.minutes) parts.push(e.minutes + '分');
+        if (e.tags && e.tags.length) parts.push('内容:' + e.tags.join('・'));
+      }
+      if (e.title) parts.push('メモ:' + e.title);
+      if (e.goal) parts.push('目標:' + e.goal);
+      if (e.achv) parts.push('達成度:' + ACHV[e.achv]);
+      if (e.cond) parts.push('調子:' + e.cond + '/5');
+      if (e.issue) parts.push('反省:' + e.issue);
+      if (e.good) parts.push('良かった:' + e.good);
+      if (e.next) parts.push('次にやること:' + e.next);
+      return '- ' + parts.join(' / ');
+    });
+    return 'アルティメット（フリスビー）をしている私の、直近の練習・試合の記録です。\n目標の達成度、繰り返している反省、次にやることを見て、次の練習・試合で重視すべきことを、すぐ実行できる形で3点以内で助言してください。\n\n【記録（新しい順）】\n' + rows.join('\n');
+  }
   function render() {
-    renderHead(); renderGoal();
+    renderHead(); renderGoal(); renderAdvice();
     var s = stats();
     $('#tPractice').innerHTML = s.pc + '<small>回</small>';
     $('#tPracticeFoot').textContent = '合計 ' + Math.floor(s.pm / 60) + '時間' + (s.pm % 60) + '分' + (s.sc ? '（個人練 ' + s.sc + '回）' : '');
@@ -572,6 +637,16 @@ header { display: flex; align-items: flex-end; justify-content: space-between; g
 
   document.querySelectorAll('[data-close]').forEach(function (el) { el.addEventListener('click', closeSheet); });
   $('#addBtn').addEventListener('click', function () { openSheet(null); });
+  $('#advCopy').addEventListener('click', function () {
+    var text = buildPrompt(), ok = false;
+    try { if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text); ok = true; } } catch (e) {}
+    if (!ok) {
+      var ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.focus(); ta.select();
+      try { ok = document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(ta);
+    }
+    toast(ok ? 'コピーしました。Claudeに貼り付けてください。' : 'コピーできませんでした。');
+  });
   $('#goalBody').addEventListener('click', function (ev) {
     var fb = ev.target.closest('[data-fb]');
     if (fb) { var e = state.entries.find(function (x) { return x.id === fb.getAttribute('data-fb'); }); if (e) openSheet(e, true); return; }
