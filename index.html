@@ -122,7 +122,7 @@ header { display: flex; align-items: flex-end; justify-content: space-between; g
 .panel-head h2 { font-size: 18px; margin: 0; }
 .ghost { background: none; border: 0; color: var(--muted); padding: 8px; min-height: 40px; }
 .panel label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 4px; }
-.panel input[type="text"], .panel input[type="date"], .panel input[type="number"], .panel textarea {
+.panel input[type="text"], .panel input[type="date"], .panel input[type="number"], .panel input[type="time"], .panel textarea {
   width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); padding: 10px 12px; min-height: 44px;
 }
 .panel textarea { resize: vertical; min-height: 72px; }
@@ -256,8 +256,13 @@ header { display: flex; align-items: flex-end; justify-content: space-between; g
         <label>やった練習（複数選べます）</label>
         <div class="tags" id="tagBox" role="group" aria-label="練習の種類"></div>
       </div>
-      <label for="fMin">時間（分）</label>
-      <input id="fMin" type="number" inputmode="numeric" min="0" max="1440" step="5" placeholder="90">
+      <label for="fStart">練習時間（何時から何時まで）</label>
+      <div class="score">
+        <input id="fStart" type="time" aria-label="開始時刻">
+        <span>〜</span>
+        <input id="fEnd" type="time" aria-label="終了時刻">
+      </div>
+      <div class="hint" id="durHint"></div>
     </div>
     <div id="matchFields" hidden>
       <label>結果</label>
@@ -272,6 +277,8 @@ header { display: flex; align-items: flex-end; justify-content: space-between; g
         <span>−</span>
         <input id="fSa" type="number" inputmode="numeric" min="0" placeholder="相手">
       </div>
+      <label for="fMinM">試合時間（分・任意）</label>
+      <input id="fMinM" type="number" inputmode="numeric" min="0" max="600" step="5" placeholder="90">
       <label>自分の役割</label>
       <div class="seg" id="roleSeg" role="group" aria-label="役割">
         <button type="button" data-v="handler" aria-pressed="false">ハンドラー</button>
@@ -473,9 +480,10 @@ header { display: flex; align-items: flex-end; justify-content: space-between; g
       var title = e.title || (isM ? '試合' : (e.kind === 'solo' ? '個人練' : '練習'));
       var meta = '';
       if (isM) { if (e.sf != null && e.sa != null) meta = e.sf + ' - ' + e.sa; }
+      else if (e.start && e.end) meta = e.start + '〜' + e.end;
       else if (e.minutes) meta = e.minutes + '分';
       var tg = '';
-      if (!isM && e.tags && e.tags.length) tg = e.tags.join('・');
+      if (!isM) { var tp = []; if (e.start && e.end && e.minutes != null) tp.push(e.minutes + '分'); if (e.tags && e.tags.length) tp.push(e.tags.join('・')); tg = tp.join('　'); }
       if (isM) {
         var bits = [];
         if (e.role && ROLE[e.role]) bits.push(ROLE[e.role]);
@@ -483,6 +491,7 @@ header { display: flex; align-items: flex-end; justify-content: space-between; g
         if (e.a != null) bits.push('A' + e.a);
         if (e.d != null) bits.push('ブロック' + e.d);
         if (e.t != null) bits.push('ターン' + e.t);
+        if (e.minutes) bits.unshift(e.minutes + '分');
         tg = bits.join('　');
       }
       var goalHtml = '';
@@ -514,6 +523,12 @@ header { display: flex; align-items: flex-end; justify-content: space-between; g
     $('#titleLabel').textContent = m ? '大会名・対戦相手' : (so ? '内容（筋トレ・ランなど）' : '練習のメモ（場所・内容など）');
     $('#fTitle').placeholder = m ? '例：○○大会 予選 vs △△' : (so ? '例：筋トレ（下半身）、スロー練' : '例：河川敷、ハイストックの対人');
   }
+  function hm(t) { var p = String(t).split(':'); return Number(p[0]) * 60 + Number(p[1]); }
+  function calcMin(st, en) { if (!st || !en) return null; var a = hm(st), b = hm(en); return b >= a ? b - a : b + 1440 - a; }
+  function updateDur() {
+    var m = calcMin($('#fStart').value, $('#fEnd').value), h = $('#durHint');
+    h.textContent = m == null ? '' : '合計 ' + (m >= 60 ? Math.floor(m / 60) + '時間' : '') + (m % 60 ? (m % 60) + '分' : (m < 60 ? '0分' : ''));
+  }
   function prevNext(kind) {
     var list = state.entries.filter(function (e) { return e.next; }).sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : (b.ts || 0) - (a.ts || 0); });
     var same = list.filter(function (e) { return e.kind === kind; })[0] || list[0];
@@ -541,7 +556,9 @@ header { display: flex; align-items: flex-end; justify-content: space-between; g
     $('#sheetTitle').textContent = entry ? '記録を編集' : '記録を追加';
     $('#fDate').value = entry ? entry.date : ymd(new Date());
     $('#fTitle').value = entry && entry.title || '';
-    $('#fMin').value = entry && entry.minutes != null ? entry.minutes : '';
+    $('#fStart').value = entry && entry.start || ''; $('#fEnd').value = entry && entry.end || '';
+    $('#fMinM').value = entry && entry.kind === 'match' && entry.minutes != null ? entry.minutes : '';
+    updateDur();
     $('#fSf').value = entry && entry.sf != null ? entry.sf : '';
     $('#fSa').value = entry && entry.sa != null ? entry.sa : '';
     setSeg('resultSeg', form.result); setSeg('condSeg', form.cond); applyKind();
@@ -561,6 +578,7 @@ header { display: flex; align-items: flex-end; justify-content: space-between; g
     if (ev.target.closest('#goalBtn')) openSheet(null);
   });
   $('#kindSeg').addEventListener('click', function (ev) { var b = ev.target.closest('button'); if (!b) return; form.kind = b.getAttribute('data-v'); if (form.kind !== 'solo' && !form.team) form.team = lastTeam(); applyKind(); updateHint(); });
+  $('#fStart').addEventListener('input', updateDur); $('#fEnd').addEventListener('input', updateDur);
   $('#achvSeg').addEventListener('click', function (ev) { var b = ev.target.closest('button'); if (!b) return; var v = b.getAttribute('data-v'); form.achv = form.achv === v ? '' : v; setSeg('achvSeg', form.achv); });
   $('#teamSeg').addEventListener('click', function (ev) { var b = ev.target.closest('button'); if (!b) return; form.team = b.getAttribute('data-v'); setSeg('teamSeg', form.team); });
   $('#resultSeg').addEventListener('click', function (ev) { var b = ev.target.closest('button'); if (!b) return; form.result = b.getAttribute('data-v'); setSeg('resultSeg', form.result); });
@@ -595,7 +613,9 @@ header { display: flex; align-items: flex-end; justify-content: space-between; g
       id: state.editing ? state.editing.id : store.newId(),
       kind: form.kind, date: date, team: isS ? null : (form.team || lastTeam()),
       title: $('#fTitle').value.trim(),
-      minutes: isM ? null : numOrNull($('#fMin').value),
+      minutes: isM ? numOrNull($('#fMinM').value) : (calcMin($('#fStart').value, $('#fEnd').value) != null ? calcMin($('#fStart').value, $('#fEnd').value) : (!$('#fStart').value && !$('#fEnd').value && state.editing && state.editing.minutes != null ? state.editing.minutes : null)),
+      start: !isM && $('#fStart').value ? $('#fStart').value : null,
+      end: !isM && $('#fEnd').value ? $('#fEnd').value : null,
       result: isM ? (form.result || null) : null,
       sf: isM ? numOrNull($('#fSf').value) : null,
       sa: isM ? numOrNull($('#fSa').value) : null,
