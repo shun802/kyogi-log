@@ -13,7 +13,6 @@
 <link rel="icon" href="icon-192.png">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
 /* Direction: night-field scoreboard. Dark ink hero with a disc motif; vermilion is the only accent; team colors mark entries. */
 :root {
@@ -268,7 +267,8 @@ button { cursor: pointer; }
       <button type="button" class="primary" id="bkCopy">コピー</button>
       <button type="button" class="danger" id="bkRestore">この内容を取り込む</button>
     </div>
-    <p class="hint">「取り込む」は、同じ日の記録を上書きせず、足りない記録だけを追加・更新します。</p>
+    <p class="hint">「取り込む」は、すでにある記録は変えず、足りない記録だけを追加します。</p>
+    <p class="hint">Safariで入れた記録と、ホーム画面に追加したアプリの記録は、別々に保存されます。移すときは、ここでコピーして取り込んでください。</p>
   </div>
 </div>
 
@@ -323,7 +323,7 @@ button { cursor: pointer; }
         <input id="fSa" type="number" inputmode="numeric" min="0" placeholder="相手">
       </div>
       <label for="fMinM">試合時間（分・任意）</label>
-      <input id="fMinM" type="number" inputmode="numeric" min="0" max="600" step="5" placeholder="90">
+      <input id="fMinM" type="number" inputmode="numeric" min="0" max="600" step="1" placeholder="90">
       <label>自分の役割</label>
       <div class="seg" id="roleSeg" role="group" aria-label="役割">
         <button type="button" data-v="handler" aria-pressed="false">ハンドラー</button>
@@ -382,6 +382,32 @@ button { cursor: pointer; }
   function lastTeam() { var r = state.entries.filter(function (e) { return e.team; }).sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); })[0]; return r ? r.team : 'WINO'; }
   var PRACTICE_TAGS = ['スクエア', '45°', 'ヘッズ', 'シュート練', 'セット練', 'ゾーン練', 'ルールありゲーム', 'ゲーム'];
   var ROLE = { handler: 'ハンドラー', cutter: 'カッター', both: '両方' };
+  var KINDS = ['practice', 'solo', 'match'], TEAMS = ['WINO', 'chatons'], RESULTS = ['W', 'L', 'D'], ACHVS = ['ok', 'part', 'ng'], ROLES = ['handler', 'cutter', 'both'];
+  function nstr(v, n) { return typeof v === 'string' ? v.slice(0, n) : ''; }
+  function nnum(v) { if (v === null || v === undefined || v === '') return null; var n = Number(v); return isFinite(n) && n >= 0 ? n : null; }
+  function ntime(v) { return typeof v === 'string' && /^\d{2}:\d{2}$/.test(v) ? v : null; }
+  /* Every entry that enters state (storage, cloud, backup, form) passes through here. */
+  function normalizeEntry(r) {
+    if (!r || typeof r !== 'object') return null;
+    var id = typeof r.id === 'string' ? r.id : (typeof r.id === 'number' ? String(r.id) : '');
+    if (!/^[A-Za-z0-9_.~:@+-]{1,100}$/.test(id)) return null;
+    if (KINDS.indexOf(r.kind) < 0) return null;
+    if (typeof r.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(r.date)) return null;
+    var cond = Math.round(Number(r.cond)), ts = Number(r.ts);
+    return {
+      id: id, kind: r.kind, date: r.date,
+      team: TEAMS.indexOf(r.team) >= 0 ? r.team : null,
+      title: nstr(r.title, 80), minutes: nnum(r.minutes), start: ntime(r.start), end: ntime(r.end),
+      result: RESULTS.indexOf(r.result) >= 0 ? r.result : null, sf: nnum(r.sf), sa: nnum(r.sa),
+      tags: Array.isArray(r.tags) ? r.tags.filter(function (t) { return typeof t === 'string'; }).slice(0, 20).map(function (t) { return t.slice(0, 30); }) : [],
+      role: ROLES.indexOf(r.role) >= 0 ? r.role : null,
+      g: nnum(r.g), a: nnum(r.a), d: nnum(r.d), t: nnum(r.t),
+      cond: cond >= 1 && cond <= 5 ? cond : null,
+      goal: nstr(r.goal, 300), achv: ACHVS.indexOf(r.achv) >= 0 ? r.achv : null,
+      issue: nstr(r.issue, 600) || nstr(r.note, 600), good: nstr(r.good, 600), next: nstr(r.next, 600),
+      ts: isFinite(ts) ? ts : 0
+    };
+  }
 
   function banner(msg) { var b = $('#banner'); if (msg) { b.textContent = msg; b.hidden = false; } else { b.hidden = true; } }
   var toastTimer = null;
@@ -390,15 +416,41 @@ button { cursor: pointer; }
   /* ---------- storage ---------- */
   function localStore() {
     var KEY = 'kyogi-log-v1';
-    try {
-      var v = JSON.parse(localStorage.getItem(KEY) || 'null');
-      if (v) { state.entries = v.entries || []; state.settings = v.settings || { sport: '' }; }
-    } catch (e) {}
-    function persist() { try { localStorage.setItem(KEY, JSON.stringify({ entries: state.entries, settings: state.settings })); } catch (e) {} }
+    var raw = null;
+    try { raw = localStorage.getItem(KEY); } catch (e) {}
+    if (raw) {
+      try {
+        var v = JSON.parse(raw);
+        if (v && typeof v === 'object') {
+          if (Array.isArray(v.entries)) state.entries = v.entries.map(normalizeEntry).filter(Boolean);
+          if (v.settings && typeof v.settings === 'object') state.settings = { sport: nstr(v.settings.sport, 30) };
+        }
+      } catch (e) {
+        try { localStorage.setItem(KEY + '-corrupt', raw); } catch (e2) {}
+        banner('保存データを読み込めませんでした。元のデータは別に残してあります。');
+      }
+    }
+    function persist() { try { localStorage.setItem(KEY, JSON.stringify({ entries: state.entries, settings: state.settings })); return true; } catch (e) { return false; } }
+    function failed() { return Promise.reject(new Error('storage')); }
     return {
-      save: function (e) { var i = state.entries.findIndex(function (x) { return x.id === e.id; }); if (i >= 0) state.entries[i] = e; else state.entries.push(e); persist(); render(); return Promise.resolve(); },
-      remove: function (id) { state.entries = state.entries.filter(function (x) { return x.id !== id; }); persist(); render(); return Promise.resolve(); },
-      setSport: function (n) { state.settings = { sport: n }; persist(); renderHead(); return Promise.resolve(); },
+      save: function (e) {
+        var n = normalizeEntry(e); if (!n) return Promise.reject(new Error('invalid'));
+        var prev = state.entries.slice(), i = state.entries.findIndex(function (x) { return x.id === n.id; });
+        if (i >= 0) state.entries[i] = n; else state.entries.push(n);
+        if (!persist()) { state.entries = prev; return failed(); }
+        render(); return Promise.resolve();
+      },
+      remove: function (id) {
+        var prev = state.entries.slice();
+        state.entries = state.entries.filter(function (x) { return x.id !== id; });
+        if (!persist()) { state.entries = prev; return failed(); }
+        render(); return Promise.resolve();
+      },
+      setSport: function (n) {
+        var prev = state.settings; state.settings = { sport: nstr(n, 30) };
+        if (!persist()) { state.settings = prev; return failed(); }
+        renderHead(); return Promise.resolve();
+      },
       newId: function () { return 'e' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
     };
   }
@@ -410,15 +462,15 @@ button { cursor: pointer; }
     var timer = setTimeout(function () { if (!got) banner('データに接続できません。表示は古い可能性があります。'); }, 10000);
     col.onSnapshot(function (snap) {
       if (!snap.metadata.fromCache) { got = true; clearTimeout(timer); banner(''); }
-      state.entries = snap.docs.map(function (d) { var o = Object.assign({}, d.data()); o.id = d.id; return o; });
+      state.entries = snap.docs.map(function (d) { var o = Object.assign({}, d.data()); o.id = d.id; return normalizeEntry(o); }).filter(Boolean);
       render();
     }, function () { banner('データを読み込めませんでした。ページを開き直してください。'); });
     sdoc.onSnapshot(function (s) {
-      state.settings = s.exists ? (s.data() || { sport: '' }) : { sport: '' };
+      state.settings = { sport: s.exists ? nstr((s.data() || {}).sport, 30) : '' };
       renderHead();
     }, function () {});
     return {
-      save: function (e) { var rest = Object.assign({}, e); delete rest.id; return col.doc(e.id).set(rest); },
+      save: function (e) { var n = normalizeEntry(e); if (!n) return Promise.reject(new Error('invalid')); var rest = Object.assign({}, n); delete rest.id; return col.doc(n.id).set(rest); },
       remove: function (id) { return col.doc(id).delete(); },
       setSport: function (n) { return sdoc.set({ sport: n }); },
       newId: function () { return col.doc().id; }
@@ -569,7 +621,7 @@ button { cursor: pointer; }
     }
     list.innerHTML = rows.map(function (e) {
       var d = parse(e.date), isM = e.kind === 'match';
-      var pill = isM ? '<span class="pill ' + esc(e.result || 'D') + '">' + ({ W: '勝', L: '負', D: '分' }[e.result] || '試合') + '</span>' : (e.kind === 'solo' ? '<span class="pill solo">個人練</span>' : '<span class="pill practice">練習</span>');
+      var pill = isM ? '<span class="pill ' + esc(e.result || 'D') + '">' + esc({ W: '勝', L: '負', D: '分' }[e.result] || '試合') + '</span>' : (e.kind === 'solo' ? '<span class="pill solo">個人練</span>' : '<span class="pill practice">練習</span>');
       if (e.team) pill = '<span class="tm ' + esc(e.team) + '">' + esc(e.team) + '</span>' + pill;
       var title = e.title || (isM ? '試合' : (e.kind === 'solo' ? '個人練' : '練習'));
       var meta = '';
@@ -590,7 +642,7 @@ button { cursor: pointer; }
       }
       var goalHtml = '';
       if (e.goal) {
-        var st = e.achv ? '<span class="pill ' + esc(e.achv) + '">' + ({ ok: '達成', part: '一部', ng: '未達' }[e.achv] || '') + '</span>' : (e.issue || e.good ? '' : '<span class="pill wait">振り返り待ち</span>');
+        var st = e.achv ? '<span class="pill ' + esc(e.achv) + '">' + esc({ ok: '達成', part: '一部', ng: '未達' }[e.achv] || '') + '</span>' : (e.issue || e.good ? '' : '<span class="pill wait">振り返り待ち</span>');
         goalHtml = '<div class="goalline"><em>目標</em>' + esc(e.goal) + ' ' + st + '</div>';
       }
       var refl = e.issue ? '<em>反省</em>' + esc(e.issue) : (e.note ? esc(e.note) : '');
@@ -637,8 +689,13 @@ button { cursor: pointer; }
       return '<button type="button" data-t="' + esc(t) + '" aria-pressed="' + (form.tags.indexOf(t) >= 0 ? 'true' : 'false') + '">' + esc(t) + '</button>';
     }).join('');
   }
+  var sheetSeq = 0, baseSig = '', closeArmed = false, saving = false;
+  var FIELD_IDS = ['#fDate', '#fTitle', '#fStart', '#fEnd', '#fMinM', '#fSf', '#fSa', '#fG', '#fA', '#fD', '#fT', '#fGoal', '#fIssue', '#fGood', '#fNext'];
+  function formSig() { return JSON.stringify([form.kind, form.team, form.result, form.cond, form.achv, form.role, form.tags, FIELD_IDS.map(function (id) { return $(id).value; })]); }
   function openSheet(entry, toFb) {
+    sheetSeq++; closeArmed = false;
     state.editing = entry || null;
+    state.draftId = entry ? entry.id : (store ? store.newId() : null);
     form = { kind: entry ? entry.kind : 'practice', team: entry ? (entry.team || '') : lastTeam(), result: entry && entry.result || '', cond: entry && entry.cond ? String(entry.cond) : '', achv: entry && entry.achv || '', role: entry && entry.role || '', tags: entry && entry.tags ? entry.tags.slice() : [] };
     var pv = function (v) { return v != null ? v : ''; };
     $('#fG').value = entry ? pv(entry.g) : ''; $('#fA').value = entry ? pv(entry.a) : '';
@@ -658,23 +715,42 @@ button { cursor: pointer; }
     setSeg('resultSeg', form.result); setSeg('condSeg', form.cond); applyKind();
     var del = $('#delBtn'); del.hidden = !entry; del.textContent = '削除'; del.dataset.armed = '';
     $('#sheet').hidden = false;
-    var pn2 = $('.panel'); if (pn2) pn2.scrollTop = 0;
+    var pn2 = $('#form'); if (pn2) pn2.scrollTop = 0;
+    baseSig = formSig();
     if (toFb) setTimeout(function () { var h = $('.fb-head'); if (h && h.scrollIntoView) h.scrollIntoView(); }, 30);
   }
-  function closeSheet() { $('#sheet').hidden = true; state.editing = null; }
+  function closeSheet() { $('#sheet').hidden = true; state.editing = null; closeArmed = false; }
+  function tryClose() {
+    if (formSig() !== baseSig && !closeArmed) {
+      closeArmed = true; toast('入力した内容が消えます。もう一度閉じると破棄します。');
+      setTimeout(function () { closeArmed = false; }, 4000);
+      return;
+    }
+    closeSheet();
+  }
   function numOrNull(v) { v = String(v).trim(); if (v === '') return null; var n = Number(v); return isFinite(n) ? n : null; }
 
-  document.querySelectorAll('[data-close]').forEach(function (el) { el.addEventListener('click', closeSheet); });
+  document.querySelectorAll('[data-close]').forEach(function (el) { el.addEventListener('click', tryClose); });
+  $('#form').addEventListener('keydown', function (ev) { if (ev.key === 'Enter' && ev.target.tagName === 'INPUT') { ev.preventDefault(); ev.target.blur(); } });
   $('#addBtn').addEventListener('click', function () { openSheet(null); });
+  function copyText(text, srcEl) {
+    return new Promise(function (resolve) {
+      function fallback() {
+        var ta = srcEl || document.createElement('textarea'), tmp = !srcEl;
+        if (tmp) { ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); }
+        ta.focus(); ta.select(); try { ta.setSelectionRange(0, ta.value.length); } catch (e) {}
+        var ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+        if (tmp) document.body.removeChild(ta);
+        resolve(ok);
+      }
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text).then(function () { resolve(true); }, fallback); }
+        else fallback();
+      } catch (e) { fallback(); }
+    });
+  }
   $('#advCopy').addEventListener('click', function () {
-    var text = buildPrompt(), ok = false;
-    try { if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text); ok = true; } } catch (e) {}
-    if (!ok) {
-      var ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.focus(); ta.select();
-      try { ok = document.execCommand('copy'); } catch (e) {}
-      document.body.removeChild(ta);
-    }
-    toast(ok ? 'コピーしました。Claudeに貼り付けてください。' : 'コピーできませんでした。');
+    copyText(buildPrompt()).then(function (ok) { toast(ok ? 'コピーしました。Claudeに貼り付けてください。' : 'コピーできませんでした。'); });
   });
   $('#goalBody').addEventListener('click', function (ev) {
     var fb = ev.target.closest('[data-fb]');
@@ -709,12 +785,13 @@ button { cursor: pointer; }
 
   $('#form').addEventListener('submit', function (ev) {
     ev.preventDefault();
+    if (saving) return;
     if (!store) { toast('準備中です。少し待ってからもう一度押してください。'); return; }
     var date = $('#fDate').value;
     if (!date) { toast('日付を入れてください。'); return; }
     var isM = form.kind === 'match', isS = form.kind === 'solo';
     var obj = {
-      id: state.editing ? state.editing.id : store.newId(),
+      id: state.editing ? state.editing.id : (state.draftId || store.newId()),
       kind: form.kind, date: date, team: isS ? null : (form.team || lastTeam()),
       title: $('#fTitle').value.trim(),
       minutes: isM ? numOrNull($('#fMinM').value) : (calcMin($('#fStart').value, $('#fEnd').value) != null ? calcMin($('#fStart').value, $('#fEnd').value) : (!$('#fStart').value && !$('#fEnd').value && state.editing && state.editing.minutes != null ? state.editing.minutes : null)),
@@ -737,8 +814,11 @@ button { cursor: pointer; }
       next: $('#fNext').value.trim(),
       ts: state.editing && state.editing.ts || Date.now()
     };
-    var btn = ev.submitter; if (btn) btn.disabled = true;
-    Promise.resolve(store.save(obj)).then(function () { closeSheet(); }).catch(function () { toast('保存できませんでした。もう一度試してください。'); }).then(function () { if (btn) btn.disabled = false; });
+    var btn = ev.submitter, mySeq = sheetSeq; saving = true; if (btn) btn.disabled = true;
+    new Promise(function (resolve) { resolve(store.save(obj)); })
+      .then(function () { if (mySeq === sheetSeq) closeSheet(); })
+      .catch(function () { toast('保存できませんでした。もう一度試してください。'); })
+      .then(function () { saving = false; if (btn) btn.disabled = false; });
   });
 
   $('#delBtn').addEventListener('click', function () {
@@ -749,9 +829,13 @@ button { cursor: pointer; }
       setTimeout(function () { b.dataset.armed = ''; b.textContent = '削除'; }, 3000);
       return;
     }
-    Promise.resolve(store.remove(state.editing.id)).then(closeSheet).catch(function () { toast('削除できませんでした。'); });
+    var delSeq = sheetSeq;
+    new Promise(function (resolve) { resolve(store.remove(state.editing.id)); }).then(function () { if (delSeq === sheetSeq) closeSheet(); }).catch(function () { toast('削除できませんでした。'); });
   });
-  document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape' && !$('#sheet').hidden) closeSheet(); });
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key !== 'Escape') return;
+    if (!$('#backup').hidden) closeBackup(); else if (!$('#sheet').hidden) tryClose();
+  });
 
   /* ---------- backup ---------- */
   function closeBackup() { $('#backup').hidden = true; }
@@ -761,11 +845,8 @@ button { cursor: pointer; }
     $('#backup').hidden = false;
   });
   $('#bkCopy').addEventListener('click', function () {
-    var t = $('#bkText'); t.focus(); t.select();
-    var ok = false;
-    try { if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(t.value); ok = true; } } catch (e) {}
-    if (!ok) { try { ok = document.execCommand('copy'); } catch (e) {} }
-    toast(ok ? 'コピーしました。メモなどに貼って残してください。' : '全選択しました。長押ししてコピーしてください。');
+    var t = $('#bkText');
+    copyText(t.value, t).then(function (ok) { toast(ok ? 'コピーしました。メモなどに貼って残してください。' : '全選択しました。長押ししてコピーしてください。'); });
   });
   var restoreArmed = false;
   $('#bkRestore').addEventListener('click', function () {
@@ -774,14 +855,21 @@ button { cursor: pointer; }
     if (!data || !Array.isArray(data.entries)) { toast('バックアップの形式が正しくありません。'); return; }
     if (!restoreArmed) { restoreArmed = true; b.textContent = 'もう一度押すと取り込む'; setTimeout(function () { restoreArmed = false; b.textContent = 'この内容を取り込む'; }, 3000); return; }
     restoreArmed = false; b.textContent = 'この内容を取り込む';
+    var have = {}; state.entries.forEach(function (e) { have[e.id] = 1; });
+    var list = data.entries.map(normalizeEntry).filter(function (e) { return e && !have[e.id]; });
+    var skipped = data.entries.length - list.length;
+    if (!list.length) { toast('追加できる記録はありませんでした。'); return; }
     var chain = Promise.resolve();
-    data.entries.forEach(function (e) { if (e && e.id && e.date && e.kind) chain = chain.then(function () { return store.save(e); }); });
-    if (data.settings && data.settings.sport) chain = chain.then(function () { return store.setSport(data.settings.sport); });
-    chain.then(function () { toast(data.entries.length + '件を取り込みました。'); closeBackup(); }).catch(function () { toast('取り込めませんでした。'); });
+    list.forEach(function (e) { chain = chain.then(function () { return store.save(e); }); });
+    if (data.settings && typeof data.settings.sport === 'string' && data.settings.sport && !state.settings.sport) chain = chain.then(function () { return store.setSport(data.settings.sport); });
+    chain.then(function () { toast(list.length + '件を追加しました' + (skipped ? '（すでにある記録・不正な記録 ' + skipped + '件は除外）' : '') + '。'); closeBackup(); }).catch(function () { toast('取り込めませんでした。'); });
   });
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
 
   /* ---------- start ---------- */
+  try { var fl = document.createElement('link'); fl.rel = 'stylesheet'; fl.href = 'https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap'; document.head.appendChild(fl); } catch (e) {}
+  try { if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) navigator.serviceWorker.register('sw.js').catch(function () {}); } catch (e) {}
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) render(); });
   render();
   (async function init() {
     var db = null, uid = null;
